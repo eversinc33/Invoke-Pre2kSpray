@@ -200,7 +200,7 @@ function Get-DomainComputerList
         }
     }
 
-    $observation_window = Get-ObservationWindow $CurrentDomain
+    $observation_window = Get-ObservationWindow $objDeDomain
 
     # Generate a computer list from the domain
     # Selecting the lowest account lockout threshold in the domain to avoid
