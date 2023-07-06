@@ -2,10 +2,17 @@
 
 Modified DomainPasswordSpray version to enumerate machine accounts and perform a pre2k password spray.
 
-### Usage 
+### Example Usage 
 
 ```powershell
+# Current domain
+Invoke-Pre2kSpray -OutFile valid-creds.txt
+
+# Specify domain, disable confirmation prompt
 Invoke-Pre2kSpray -OutFile valid-creds.txt -Domain test.local -Force
+
+# Filter out accounts with pwdlastset in the last 30 days, to speed things up. Those are probably normal machine accounts that rotate their passwords
+Invoke-Pre2kSpray -OutFile valid-creds.txt -Filter
 ```
 
 ### References / Credits
