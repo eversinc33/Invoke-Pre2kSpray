@@ -235,7 +235,7 @@ function Invoke-SpraySinglePassword
     {
         # Truncate if longer than 14 chars
         $Password = "$Computer".ToLower().Substring(0,"$Computer".Length - 1)
-        if ("$Password".Length > 14)
+        if ("$Password".Length -gt 14)
         {
             $Password = $Password.Substring(0,14)
         }
