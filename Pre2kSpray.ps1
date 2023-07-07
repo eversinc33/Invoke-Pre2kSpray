@@ -233,17 +233,18 @@ function Invoke-SpraySinglePassword
     )
     $time = Get-Date
     $count = $UserListArray.count
-    Write-Host "[*] Starting pre2k spray against $count computers. Current time is $($time.ToShortTimeString())"
     $curr_user = 0
     $conn_errors = 0
+
+    # import assembly needed for krb auth
+    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+    
+    Write-Host "[*] Starting pre2k spray against $count computers. Current time is $($time.ToShortTimeString())"
+    
     if ($OutFile -ne "")
     {
         Write-Host -ForegroundColor Yellow "[*] Writing successes to $OutFile"    
     }
-    $RandNo = New-Object System.Random
-
-    # import assembly needed for krb auth
-    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
 
     foreach ($Computer in $UserListArray)
     {
@@ -287,5 +288,4 @@ function Invoke-SpraySinglePassword
 
         Write-Host -nonewline "$curr_user of $count computers tested`r"
     }
-
 }
