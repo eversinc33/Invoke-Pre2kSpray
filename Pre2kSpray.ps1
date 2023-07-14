@@ -209,7 +209,7 @@ function Get-DomainComputerList
         $ComputerListArray += $samaccountname
     }
 
-    Write-Host -foregroundcolor "yellow" ("[*] Created a userlist containing " + $ComputerListArray.count + " computers gathered from the current user's domain")
+    Write-Host -foregroundcolor "yellow" ("[*] Created a userlist containing " + $ComputerListArray.count + " computers gathered from the target domain")
     return $ComputerListArray
 }
 
